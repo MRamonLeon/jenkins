@@ -47,9 +47,11 @@ import java.net.URL;
 import java.net.URLConnection;
 import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
 import javax.annotation.CheckForNull;
 import jenkins.model.Jenkins;
+import jenkins.security.stapler.StaplerAccessibleType;
 import jenkins.util.JenkinsJVM;
 import jenkins.util.SystemProperties;
 import org.apache.commons.httpclient.Credentials;
@@ -78,12 +80,13 @@ import org.kohsuke.stapler.interceptor.RequirePOST;
  *
  * @see jenkins.model.Jenkins#proxy
  */
+@StaplerAccessibleType
 public final class ProxyConfiguration extends AbstractDescribableImpl<ProxyConfiguration> implements Saveable, Serializable {
     /**
      * Holds a default TCP connect timeout set on all connections returned from this class,
      * note this is value is in milliseconds, it's passed directly to {@link URLConnection#setConnectTimeout(int)}
      */
-    private static final int DEFAULT_CONNECT_TIMEOUT_MILLIS = SystemProperties.getInteger("hudson.ProxyConfiguration.DEFAULT_CONNECT_TIMEOUT_MILLIS", 20 * 1000);
+    private static final int DEFAULT_CONNECT_TIMEOUT_MILLIS = SystemProperties.getInteger("hudson.ProxyConfiguration.DEFAULT_CONNECT_TIMEOUT_MILLIS", (int)TimeUnit.SECONDS.toMillis(20));
     
     public final String name;
     public final int port;
@@ -134,7 +137,11 @@ public final class ProxyConfiguration extends AbstractDescribableImpl<ProxyConfi
         this.secretPassword = Secret.fromString(password);
         this.noProxyHost = Util.fixEmptyAndTrim(noProxyHost);
         this.testUrl = Util.fixEmptyAndTrim(testUrl);
-        authenticator = new Authenticator() {
+        this.authenticator = newAuthenticator();
+    }
+
+    private Authenticator newAuthenticator() {
+        return new Authenticator() {
             @Override
             public PasswordAuthentication getPasswordAuthentication() {
                 String userName = getUserName();
@@ -223,6 +230,7 @@ public final class ProxyConfiguration extends AbstractDescribableImpl<ProxyConfi
             // backward compatibility : get scrambled password and store it encrypted
             secretPassword = Secret.fromString(Scrambler.descramble(password));
         password = null;
+        authenticator = newAuthenticator();
         return this;
     }
 
@@ -388,7 +396,7 @@ public final class ProxyConfiguration extends AbstractDescribableImpl<ProxyConfi
             GetMethod method = null;
             try {
                 method = new GetMethod(testUrl);
-                method.getParams().setParameter("http.socket.timeout", DEFAULT_CONNECT_TIMEOUT_MILLIS > 0 ? DEFAULT_CONNECT_TIMEOUT_MILLIS : new Integer(30 * 1000));
+                method.getParams().setParameter("http.socket.timeout", DEFAULT_CONNECT_TIMEOUT_MILLIS > 0 ? DEFAULT_CONNECT_TIMEOUT_MILLIS : TimeUnit.SECONDS.toMillis(30));
                 
                 HttpClient client = new HttpClient();
                 if (Util.fixEmptyAndTrim(name) != null && !isNoProxyHost(host, noProxyHost)) {

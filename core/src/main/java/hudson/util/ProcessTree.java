@@ -40,6 +40,7 @@ import hudson.util.ProcessTree.OSProcess;
 import hudson.util.ProcessTreeRemoting.IOSProcess;
 import hudson.util.ProcessTreeRemoting.IProcessTree;
 import jenkins.security.SlaveToMasterCallable;
+import jenkins.util.java.JavaUtils;
 import org.jvnet.winp.WinProcess;
 import org.jvnet.winp.WinpException;
 
@@ -67,6 +68,7 @@ import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Optional;
 import java.util.SortedMap;
+import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -97,7 +99,7 @@ public abstract class ProcessTree implements Iterable<OSProcess>, IProcessTree, 
     /**
      * To be filled in the constructor of the derived type.
      */
-    protected final Map<Integer/*pid*/, OSProcess> processes = new HashMap<Integer, OSProcess>();
+    protected final Map<Integer/*pid*/, OSProcess> processes = new HashMap<>();
 
     /**
      * Lazily obtained {@link ProcessKiller}s to be applied on this process tree.
@@ -549,7 +551,7 @@ public abstract class ProcessTree implements Iterable<OSProcess>, IProcessTree, 
             }
 
             // after that wait for it to cease to exist
-            long deadline = System.nanoTime() + softKillWaitSeconds * 1000000000;
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(softKillWaitSeconds);
             int sleepTime = 10; // initially we sleep briefly, then sleep up to 1sec
             do {
                 if (!p.isRunning()) {
@@ -758,7 +760,7 @@ public abstract class ProcessTree implements Iterable<OSProcess>, IProcessTree, 
          */
         public void kill() throws InterruptedException {
             // after sending SIGTERM, wait for the process to cease to exist
-            long deadline = System.nanoTime() + softKillWaitSeconds * 1000000000;
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(softKillWaitSeconds);
             kill(deadline);
         }
 
@@ -797,7 +799,7 @@ public abstract class ProcessTree implements Iterable<OSProcess>, IProcessTree, 
 
         public void killRecursively() throws InterruptedException {
             // after sending SIGTERM, wait for the processes to cease to exist until the deadline
-            long deadline = System.nanoTime() + softKillWaitSeconds * 1000000000;
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(softKillWaitSeconds);
             killRecursively(deadline);
         }
 
@@ -852,7 +854,7 @@ public abstract class ProcessTree implements Iterable<OSProcess>, IProcessTree, 
 
         static {
             try {
-                if (isPostJava8()) { // Java 9+
+                if (JavaUtils.isRunningWithPostJava8()) {
                     Class<?> clazz = Process.class;
                     JAVA9_PID_METHOD = clazz.getMethod("pid");
                     JAVA8_PID_FIELD = null;
@@ -872,8 +874,7 @@ public abstract class ProcessTree implements Iterable<OSProcess>, IProcessTree, 
                     JAVA_9_PROCESSHANDLE_DESTROY = null;
                 }
             } catch (ClassNotFoundException | NoSuchFieldException | NoSuchMethodException e) {
-                LinkageError x = new LinkageError("Cannot initialize reflection for Unix Processes", e);
-                throw x;
+                throw new LinkageError("Cannot initialize reflection for Unix Processes", e);
             }
         }
 
@@ -906,12 +907,6 @@ public abstract class ProcessTree implements Iterable<OSProcess>, IProcessTree, 
                 x.initCause(e);
                 throw x;
             }
-        }
-
-        // Java 9 uses new version format
-        private static boolean isPostJava8() {
-            String javaVersion = System.getProperty("java.version");
-            return !javaVersion.startsWith("1.");
         }
     }
 
