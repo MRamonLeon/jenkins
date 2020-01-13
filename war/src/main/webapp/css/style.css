@@ -82,6 +82,10 @@ dt {
   font-weight: bold;
 }
 
+dt > .plugin_version {
+  font-weight: normal;
+}
+
 .fixed-width {
   font-family: monospace;
 }
@@ -457,9 +461,10 @@ td.pane {
   vertical-align: middle;
 }
 
-table.stripped tr:nth-child(even) {
+table.stripped tr:nth-of-type(even) {
   background: #fbfbfb;
 }
+
 table.stripped-even tr:nth-child(even) {
   background: #fbfbfb;
 }
@@ -1579,6 +1584,10 @@ TEXTAREA.rich-editor {
     color: #888a85;
 }
 
+/*
+ * TODO(andipabst): Not used after https://github.com/jenkinsci/jenkins/pull/4299, 
+ *                  remove once there are no more dependencies
+ */
 #plugins .compatWarning {
     white-space: normal;
     margin-top: 0.5em;

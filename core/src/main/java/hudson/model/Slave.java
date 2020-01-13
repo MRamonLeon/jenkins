@@ -439,7 +439,7 @@ public abstract class Slave extends Node implements Serializable {
             return res;
         }
 
-        /** Useful for {@code JenkinsRule.createSlave}, {@code hudson-dev:run}, etc. */
+        /** Useful for {@code JenkinsRule.createSlave}, {@code mvn jetty:run}, etc. */
         private @CheckForNull URL findExecutableJar(File notActuallyJAR, Class<?> mainClass) throws IOException {
             if (notActuallyJAR.getName().equals("classes")) {
                 File[] siblings = notActuallyJAR.getParentFile().listFiles();
@@ -512,7 +512,7 @@ public abstract class Slave extends Node implements Serializable {
             if (isUnix == null) {
                 // isUnix is always set when the channel is not null, so it should never happen
                 reportLauncherCreateError("The agent has not been fully initialized yet",
-                                         "Cannot determing if the agent is a Unix one, the System status request has not completed yet. " +
+                                         "Cannot determine if the agent is a Unix one, the System status request has not completed yet. " +
                                          "It is an invalid channel state, please report a bug to Jenkins if you see it.", 
                                          listener);
                 return new Launcher.DummyLauncher(listener);

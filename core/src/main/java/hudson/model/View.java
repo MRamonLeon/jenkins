@@ -91,6 +91,7 @@ import javax.servlet.ServletException;
 import javax.servlet.http.HttpServletResponse;
 import javax.xml.transform.Source;
 import javax.xml.transform.TransformerException;
+import javax.xml.transform.sax.SAXSource;
 import javax.xml.transform.stream.StreamResult;
 import javax.xml.transform.stream.StreamSource;
 import java.io.BufferedInputStream;
@@ -321,8 +322,9 @@ public abstract class View extends AbstractModelObject implements AccessControll
     }
 
     /**
-     * Returns all the {@link LabelAtomPropertyDescriptor}s that can be potentially configured
-     * on this label.
+     * Returns all the {@link ViewPropertyDescriptor}s that can be potentially configured
+     * on this view. Returns both {@link ViewPropertyDescriptor}s visible and invisible for user, see
+     * {@link View#getVisiblePropertyDescriptors} to filter invisible one.
      */
     public List<ViewPropertyDescriptor> getApplicablePropertyDescriptors() {
         List<ViewPropertyDescriptor> r = new ArrayList<>();
@@ -331,6 +333,15 @@ public abstract class View extends AbstractModelObject implements AccessControll
                 r.add(pd);
         }
         return r;
+    }
+
+    /**
+     * @return all the {@link ViewPropertyDescriptor}s that can be potentially configured on this View and are visible
+     * for the user. Use {@link DescriptorVisibilityFilter} to make a View property invisible for users.
+     * @since 2.214
+     */
+    public List<ViewPropertyDescriptor> getVisiblePropertyDescriptors() {
+        return DescriptorVisibilityFilter.apply(this, getApplicablePropertyDescriptors());
     }
 
     public void save() throws IOException {
@@ -671,9 +682,7 @@ public abstract class View extends AbstractModelObject implements AccessControll
         public int compareTo(UserInfo that) {
             long rhs = that.ordinal();
             long lhs = this.ordinal();
-            if(rhs>lhs) return 1;
-            if(rhs<lhs) return -1;
-            return 0;
+            return Long.compare(rhs, lhs);
         }
 
         private long ordinal() {
@@ -954,7 +963,7 @@ public abstract class View extends AbstractModelObject implements AccessControll
      * Add a simple CollectionSearchIndex object to sib
      *
      * @param sib the SearchIndexBuilder
-     * @since TODO
+     * @since 2.200
      */
     protected void makeSearchIndex(SearchIndexBuilder sib) {
         sib.add(new CollectionSearchIndex<TopLevelItem>() {// for jobs in the view
@@ -1206,7 +1215,7 @@ public abstract class View extends AbstractModelObject implements AccessControll
     /**
      * Updates the View with the new XML definition.
      * @param source source of the Item's new definition.
-     *               The source should be either a <code>StreamSource</code> or <code>SAXSource</code>, other sources
+     *               The source should be either a {@link StreamSource} or {@link SAXSource}, other sources
      *               may not be handled.
      */
     public void updateByXml(Source source) throws IOException {
