@@ -24,6 +24,9 @@
 package hudson;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import hudson.security.ACLContext;
+import jenkins.ExtensionRefreshException;
+import jenkins.util.SystemProperties;
 import hudson.PluginWrapper.Dependency;
 import hudson.init.InitMilestone;
 import hudson.init.InitStrategy;
@@ -33,27 +36,22 @@ import hudson.model.AbstractModelObject;
 import hudson.model.AdministrativeMonitor;
 import hudson.model.Api;
 import hudson.model.Descriptor;
-import hudson.model.DownloadService;
 import hudson.model.Failure;
 import hudson.model.ItemGroupMixIn;
 import hudson.model.UpdateCenter;
+import hudson.model.UpdateSite;
 import hudson.model.UpdateCenter.DownloadJob;
 import hudson.model.UpdateCenter.InstallationJob;
-import hudson.model.UpdateSite;
 import hudson.security.ACL;
-import hudson.security.ACLContext;
 import hudson.security.Permission;
 import hudson.security.PermissionScope;
 import hudson.util.CyclicGraphDetector;
 import hudson.util.CyclicGraphDetector.CycleDetectedException;
-import hudson.util.FormValidation;
 import hudson.util.PersistedList;
-import hudson.util.Retrier;
 import hudson.util.Service;
 import hudson.util.VersionNumber;
 import hudson.util.XStream2;
 import jenkins.ClassLoaderReflectionToolkit;
-import jenkins.ExtensionRefreshException;
 import jenkins.InitReactorRunner;
 import jenkins.MissingDependencyException;
 import jenkins.RestartRequiredException;
@@ -67,8 +65,10 @@ import jenkins.telemetry.impl.java11.MissingClassTelemetry;
 import jenkins.util.SystemProperties;
 import jenkins.util.io.OnMaster;
 import jenkins.util.xml.RestrictiveEntityResolver;
+
 import net.sf.json.JSONArray;
 import net.sf.json.JSONObject;
+
 import org.acegisecurity.Authentication;
 import org.apache.commons.fileupload.FileItem;
 import org.apache.commons.fileupload.FileUploadException;
@@ -85,9 +85,7 @@ import org.jvnet.hudson.reactor.Executable;
 import org.jvnet.hudson.reactor.Reactor;
 import org.jvnet.hudson.reactor.TaskBuilder;
 import org.jvnet.hudson.reactor.TaskGraphBuilder;
-import org.kohsuke.accmod.Restricted;
 import org.kohsuke.accmod.restrictions.DoNotUse;
-import org.kohsuke.accmod.restrictions.NoExternalUse;
 import org.kohsuke.stapler.HttpRedirect;
 import org.kohsuke.stapler.HttpResponse;
 import org.kohsuke.stapler.HttpResponses;
@@ -111,7 +109,6 @@ import javax.servlet.ServletContext;
 import javax.servlet.ServletException;
 import javax.xml.parsers.ParserConfigurationException;
 import javax.xml.parsers.SAXParserFactory;
-import java.io.ByteArrayInputStream;
 import java.io.Closeable;
 import java.io.File;
 import java.io.FilenameFilter;
@@ -119,12 +116,10 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.lang.ref.WeakReference;
 import java.lang.reflect.Method;
-import java.net.JarURLConnection;
 import java.net.MalformedURLException;
 import java.net.URISyntaxException;
 import java.net.URL;
 import java.net.URLClassLoader;
-import java.net.URLConnection;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -135,7 +130,6 @@ import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.ServiceLoader;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.UUID;
@@ -143,8 +137,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Future;
-import java.util.function.Supplier;
-import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
 import java.util.jar.Manifest;
 import java.util.logging.Level;
@@ -152,7 +144,22 @@ import java.util.logging.Logger;
 import java.util.stream.Collectors;
 
 import static hudson.init.InitMilestone.*;
-import static java.util.logging.Level.*;
+import hudson.model.DownloadService;
+import hudson.util.FormValidation;
+import java.io.ByteArrayInputStream;
+import java.net.JarURLConnection;
+import java.net.URLConnection;
+import java.util.ServiceLoader;
+import java.util.function.Supplier;
+import java.util.jar.JarEntry;
+
+import static java.util.logging.Level.FINE;
+import static java.util.logging.Level.INFO;
+import static java.util.logging.Level.SEVERE;
+import static java.util.logging.Level.WARNING;
+import jenkins.security.CustomClassFilter;
+import org.kohsuke.accmod.Restricted;
+import org.kohsuke.accmod.restrictions.NoExternalUse;
 
 /**
  * Manages {@link PluginWrapper}s.
@@ -1705,55 +1712,45 @@ public abstract class PluginManager extends AbstractModelObject implements OnMas
     @RequirePOST public HttpResponse doCheckUpdatesServer() throws IOException {
         Jenkins.get().checkPermission(Jenkins.ADMINISTER);
 
-        // We'll check the update servers with a try-retry mechanism. The retrier is built with a builder
-        Retrier<FormValidation> updateServerRetrier = new Retrier.Builder<>(
-                // the action to perform
-                this::checkUpdatesServer,
+        int sleep = SystemProperties.getInteger(PluginManager.class.getName() + ".sleepTimeMilis", 1000);
+        int retries = SystemProperties.getInteger(PluginManager.class.getName() + ".retries", 3);
 
-                // the way we know whether this attempt was right or wrong
-                (currentAttempt, result) -> result.kind == FormValidation.Kind.OK,
+        retries = retries > 0 ? retries : 3;
+        sleep = sleep > 0 ? sleep : 1000;
 
-                // the action name we are trying to perform
-                "check updates server")
-
-                // the number of attempts to try
-                .withAttempts(CHECK_UPDATE_ATTEMPTS)
-
-                // the delay between attempts
-                .withDelay(CHECK_UPDATE_SLEEP_TIME_MILLIS)
-
-                // whatever exception raised is considered as a fail attempt (all exceptions), not a failure
-                .withDuringActionExceptions(new Class[] {Exception.class})
-
-                // what we do with a failed attempt due to an allowed exception, return an FormValidation.error with the message
-                .withDuringActionExceptionListener( (attempt, e) -> FormValidation.errorWithMarkup(e.getClass().getSimpleName() + ": " + e.getLocalizedMessage()))
-
-                // lets get our retrier object
-                .build();
-
-        try {
-            // Begin the process
-            FormValidation result = updateServerRetrier.start();
-
-            // Check how it went
-            if (!FormValidation.Kind.OK.equals(result.kind)) {
-                LOGGER.log(Level.SEVERE, Messages.PluginManager_UpdateSiteError(CHECK_UPDATE_ATTEMPTS, result.getMessage()));
-                if (CHECK_UPDATE_ATTEMPTS > 1 && !Logger.getLogger(Retrier.class.getName()).isLoggable(Level.WARNING)) {
-                    LOGGER.log(Level.SEVERE, Messages.PluginManager_UpdateSiteChangeLogLevel(Retrier.class.getName()));
-                }
-
-                lastErrorCheckUpdateCenters = Messages.PluginManager_CheckUpdateServerError(result.getMessage());
-            } else {
-                lastErrorCheckUpdateCenters = null;
+        FormValidation response = null;
+        int i = 0;
+        boolean success = false;
+        while(i < retries && !success) {
+            i++;
+            try {
+                response = checkUpdatesServer();
+                lastErrorCheckUpdateCenters = response.getMessage(); //may be null (OK)
+                success = (response.kind == FormValidation.Kind.OK);
+            } catch (Exception e) {
+                // No matter what went on, don't show angry jenkins, just a message and see log for more info
+                lastErrorCheckUpdateCenters = e.getLocalizedMessage();
             }
 
-        } catch (Exception e) {
-            // It's never going to be reached because we declared all Exceptions in the withDuringActionExceptions, so
-            // whatever exception is considered a expected failed attempt and the retries continue
-            LOGGER.log(Level.WARNING, Messages.PluginManager_UnexpectedException(), e);
+            if (!success) {
+                LOGGER.warning(String.format("The attempt #%s to check updates server failed. Exception: %s", i, lastErrorCheckUpdateCenters));
 
-            // In order to leave this method as it was, rethrow as IOException
-            throw new IOException(e);
+                if (i < retries) {
+                    LOGGER.info(String.format("Will retry after %s milliseconds", sleep));
+                    try {
+                        Thread.sleep(sleep);
+                    } catch (InterruptedException ie) {
+                        LOGGER.info("The wait for a new attempt to check updates server was interrupted. Exception: " + ie);
+                    }
+                } else {
+                    LOGGER.info(String.format("Attempted to check updates server for %s times with no success, raising an error", retries));
+                    LOGGER.severe(String.format("Error checking updates server for %s times. Last exception was: %s", retries, lastErrorCheckUpdateCenters));
+                    if(!LOGGER.isLoggable(Level.WARNING)) {
+                        LOGGER.severe("Change the log level to WARNING or below to see the error message of every attempt");
+                    }
+                    lastErrorCheckUpdateCenters = Messages.PluginManager_CheckUpdateServerError(lastErrorCheckUpdateCenters);
+                }
+            }
         }
 
         // Stay in the same page in any case
@@ -1761,7 +1758,7 @@ public abstract class PluginManager extends AbstractModelObject implements OnMas
     }
 
     private FormValidation checkUpdatesServer() throws Exception {
-        for (UpdateSite site : Jenkins.get().getUpdateCenter().getSites()) {
+        for (UpdateSite site : Jenkins.getInstance().getUpdateCenter().getSites()) {
             FormValidation v = site.updateDirectlyNow(DownloadService.signatureCheck);
             if (v.kind != FormValidation.Kind.OK) {
                 // Stop with an error
@@ -1778,14 +1775,9 @@ public abstract class PluginManager extends AbstractModelObject implements OnMas
         return FormValidation.ok();
     }
 
-    /**
-     * Returns the last error raised during the update sites checking.
-     * @return the last error message
-     */
     public String getLastErrorCheckUpdateCenters() {
         return lastErrorCheckUpdateCenters;
     }
-
     protected String identifyPluginShortName(File t) {
         try {
             try (JarFile j = new JarFile(t)) {
@@ -1828,7 +1820,7 @@ public abstract class PluginManager extends AbstractModelObject implements OnMas
         for (Map.Entry<String,VersionNumber> requestedPlugin : parseRequestedPlugins(configXml).entrySet()) {
             PluginWrapper pw = getPlugin(requestedPlugin.getKey());
             if (pw == null) { // install new
-                UpdateSite.Plugin toInstall = uc.getPlugin(requestedPlugin.getKey(), requestedPlugin.getValue());
+                UpdateSite.Plugin toInstall = uc.getPlugin(requestedPlugin.getKey());
                 if (toInstall == null) {
                     LOGGER.log(WARNING, "No such plugin {0} to install", requestedPlugin.getKey());
                     continue;
@@ -1836,7 +1828,7 @@ public abstract class PluginManager extends AbstractModelObject implements OnMas
                 logPluginWarnings(requestedPlugin, toInstall);
                 jobs.add(toInstall.deploy(true));
             } else if (pw.isOlderThan(requestedPlugin.getValue())) { // upgrade
-                UpdateSite.Plugin toInstall = uc.getPlugin(requestedPlugin.getKey(), requestedPlugin.getValue());
+                UpdateSite.Plugin toInstall = uc.getPlugin(requestedPlugin.getKey());
                 if (toInstall == null) {
                     LOGGER.log(WARNING, "No such plugin {0} to upgrade", requestedPlugin.getKey());
                     continue;
@@ -2103,6 +2095,9 @@ public abstract class PluginManager extends AbstractModelObject implements OnMas
             return "classLoader " +  getClass().getName();
         }
     }
+
+    private static final Logger LOGGER = Logger.getLogger(PluginManager.class.getName());
+
     public static boolean FAST_LOOKUP = !SystemProperties.getBoolean(PluginManager.class.getName()+".noFastLookup");
 
     public static final Permission UPLOAD_PLUGINS = new Permission(Jenkins.PERMISSIONS, "UploadPlugins", Messages._PluginManager_UploadPluginsPermission_Description(),Jenkins.ADMINISTER,PermissionScope.JENKINS);
