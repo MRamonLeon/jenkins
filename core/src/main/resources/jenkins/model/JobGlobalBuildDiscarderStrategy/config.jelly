@@ -1,7 +1,7 @@
 <!--
 The MIT License
 
-Copyright (c) 2014 Daniel Beck
+Copyright (c) 2019 Daniel Beck
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -22,13 +22,9 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 -->
 <?jelly escape-by-default='true'?>
-<j:jelly xmlns:j="jelly:core" xmlns:st="jelly:stapler" xmlns:l="/lib/layout">
-    <st:statusCode value="404" />
-    <st:include page="sidepanel.jelly" from="${app}" it="${app}" />
-    <l:layout title="${%Signup not supported}">
-        <l:main-panel>
-            <h1>${%Sign up}</h1>
-            ${%This is not supported in the current configuration.}
-        </l:main-panel>
-    </l:layout>
+<j:jelly xmlns:j="jelly:core" xmlns:f="/lib/form">
+    <!-- config files are required but can be empty if there are no options -->
+    <f:description>
+        ${%blurb}
+    </f:description>
 </j:jelly>
